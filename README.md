@@ -1,3 +1,5 @@
+![Banner](banner.png)
+
 # misconfig-ConfigSecretScanner
 Scans configuration files for embedded secrets (API keys, passwords, etc.) using regex patterns and entropy analysis. Leverages libraries like `secrets` and `regex` to identify potentially exposed credentials. - Focused on Check for misconfigurations in configuration files or infrastructure definitions
 
