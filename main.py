@@ -85,7 +85,10 @@ def scan_file(filepath: str) -> List[Dict[str, Union[str, int]]]:
                     findings.append({
                         "filepath": filepath,
                         "secret_type": name,
-                        "secret": secret,
+                        # Store only the same 20 character snippet the log
+                        # shows. The full match used to be kept here and
+                        # written in full to the JSON output file.
+                        "secret": secret[:20],
                         "start_index": match.start(),
                         "end_index": match.end(),
                         "entropy": entropy
@@ -102,7 +105,7 @@ def scan_file(filepath: str) -> List[Dict[str, Union[str, int]]]:
                     findings.append({
                             "filepath": filepath,
                             "secret_type": "YAML Linting Issue",
-                            "secret": result.stderr,
+                            "secret": result.stderr[:20],
                             "start_index": 0,
                             "end_index": len(result.stderr),
                             "entropy": 0.0 #N/A for linting issues
@@ -120,7 +123,7 @@ def scan_file(filepath: str) -> List[Dict[str, Union[str, int]]]:
                     findings.append({
                             "filepath": filepath,
                             "secret_type": "JSON Linting Issue",
-                            "secret": result.stderr,
+                            "secret": result.stderr[:20],
                             "start_index": 0,
                             "end_index": len(result.stderr),
                             "entropy": 0.0 #N/A for linting issues
@@ -134,12 +137,15 @@ def scan_file(filepath: str) -> List[Dict[str, Union[str, int]]]:
 
     except FileNotFoundError:
         logging.error(f"File not found: {filepath}")
+        return findings, filepath
     except IOError as e:
         logging.error(f"Error reading file {filepath}: {e}")
+        return findings, filepath
     except Exception as e:
         logging.error(f"An unexpected error occurred while processing {filepath}: {e}")
+        return findings, filepath
 
-    return findings
+    return findings, None
 
 
 def scan_directory(directory: str, recursive: bool = False, exclude: List[str] = None) -> List[Dict[str, Union[str, int]]]:
@@ -156,6 +162,7 @@ def scan_directory(directory: str, recursive: bool = False, exclude: List[str] =
     """
 
     findings = []
+    failures = []
     exclude = exclude or []
 
     try:
@@ -167,17 +174,25 @@ def scan_directory(directory: str, recursive: bool = False, exclude: List[str] =
                 continue
 
             if os.path.isfile(item_path):
-                findings.extend(scan_file(item_path))
+                found, failed = scan_file(item_path)
+                findings.extend(found)
+                if failed:
+                    failures.append(failed)
             elif os.path.isdir(item_path) and recursive:
-                findings.extend(scan_directory(item_path, recursive, exclude))
+                found, sub_failures = scan_directory(item_path, recursive, exclude)
+                findings.extend(found)
+                failures.extend(sub_failures)
     except FileNotFoundError:
         logging.error(f"Directory not found: {directory}")
+        failures.append(directory)
     except OSError as e:
         logging.error(f"Error accessing directory {directory}: {e}")
+        failures.append(directory)
     except Exception as e:
         logging.error(f"An unexpected error occurred while processing directory {directory}: {e}")
+        failures.append(directory)
 
-    return findings
+    return findings, failures
 
 
 def main():
@@ -199,10 +214,13 @@ def main():
         logging.error(f"Path does not exist: {filepath}")
         sys.exit(1)
 
+    failures = []
     if os.path.isfile(filepath):
-        findings = scan_file(filepath)
+        findings, failed = scan_file(filepath)
+        if failed:
+            failures.append(failed)
     elif os.path.isdir(filepath):
-        findings = scan_directory(filepath, recursive, exclude)
+        findings, failures = scan_directory(filepath, recursive, exclude)
     else:
         logging.error(f"Invalid path type: {filepath}")
         sys.exit(1)
@@ -224,8 +242,13 @@ def main():
                 logging.error(f"Error writing to JSON file: {e}")
             except Exception as e:
                 logging.error(f"An unexpected error occurred while writing JSON output: {e}")
-    else:
+    elif not failures:
         print("No secrets found.")
+
+    if failures:
+        print(f"Scan incomplete: could not read {len(failures)} file(s): {', '.join(failures)}")
+        logging.error(f"Scan incomplete: could not read {len(failures)} file(s).")
+        sys.exit(1)
 
 # Example usage
 import math
