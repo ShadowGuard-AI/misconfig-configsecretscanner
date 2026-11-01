@@ -52,6 +52,10 @@ def calculate_entropy(data: str) -> float:
     if not data:
         return 0.0
     entropy = 0.0
+    # This recounts the whole string once per possible byte
+    # value, 256 passes over every match. On a large file with
+    # many pattern matches the entropy check costs far more than
+    # the scanning that found them.
     for x in range(256):
         p_x = float(data.count(chr(x))) / len(data)
         if p_x > 0:
@@ -79,9 +83,20 @@ def scan_file(filepath: str) -> List[Dict[str, Union[str, int]]]:
             for match in re.finditer(pattern, content, re.MULTILINE | re.IGNORECASE):
                 secret = match.group(0)
                 # Check entropy to avoid false positives (e.g., short strings)
+                # The entropy gate is where real weak secrets go to be
+                # excused. A password made of one repeated character, or a
+                # short dictionary word the pattern above caught, scores low
+                # and is dropped, while a random looking hash or a git commit
+                # id sails over 4.0 and is reported as an API key. I measure
+                # surprise, not sensitivity, and the two are not the same.
                 entropy = calculate_entropy(secret)
                 if entropy > 4.0:  # Adjust threshold as needed
                     logging.warning(f"Potential {name} found in {filepath} : {secret[:20]}...") # Log only a snippet
+                    # One secret usually earns several findings. An AWS key id
+                    # also matches the generic API key pattern and the forty
+                    # character pattern, and each is appended as its own result,
+                    # so my counts overstate the number of distinct secrets in a
+                    # file by however many patterns overlap on them.
                     findings.append({
                         "filepath": filepath,
                         "secret_type": name,
@@ -169,6 +184,11 @@ def scan_directory(directory: str, recursive: bool = False, exclude: List[str] =
         for item in os.listdir(directory):
             item_path = os.path.join(directory, item)
 
+            # Exclusions match the bare item name at each level of the
+            # walk, nothing more. Excluding a path, or a pattern, never
+            # matches anything, and a name excluded once is excluded in
+            # every directory I recurse into, including places the
+            # operator may not have meant.
             if item in exclude:
                 logging.info(f"Skipping excluded item: {item_path}")
                 continue
@@ -233,6 +253,12 @@ def main():
             print(f"  Secret: {finding['secret'][:50]}...")  # Print only a snippet
             print("-" * 20)
 
+        # This block sits inside the findings branch and below no exit
+        # call, which is the shape of the whole ending: findings by
+        # themselves never set an exit code in main. A scan that finds
+        # secrets and reads everything exits 0, and only an unreadable
+        # file makes the run fail. A lint complaint also lands in the
+        # same findings list as a secret, indistinguishable in count.
         if json_output_path:
             try:
                 with open(json_output_path, 'w') as f:
@@ -251,6 +277,12 @@ def main():
         sys.exit(1)
 
 # Example usage
+# math arrives here, at the bottom of the file, because
+# calculate_entropy above was written against it before the
+# import was added. It works because the module finishes
+# loading before main runs, but anyone importing
+# calculate_entropy and calling it during their own import
+# of a partially loaded copy would meet the missing name.
 import math
 if __name__ == "__main__":
     # Example: Scan a single file
